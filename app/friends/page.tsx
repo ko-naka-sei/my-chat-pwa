@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Search, UserPlus, Check, Calender} from "lucide-react";
+import { Search, UserPlus, Check, Calendar} from "lucide-react";
 import { useRouter } from "next/navigation";
 
 export default function FriendsPage() {

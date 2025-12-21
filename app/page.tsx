@@ -1,44 +1,55 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { collection, query, orderBy, onSnapshot, getDocs, where, documentId } from "firebase/firestore";
+import { collection, query, orderBy, onSnapshot } from "firebase/firestore";
 import { db, auth } from "@/lib/firebase";
 import { signOut } from "firebase/auth";
 import { useRouter } from "next/navigation";
+import { useAuth } from "@/context/AuthContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Plus, LogOut, Loader2, Camera, Calendar } from "lucide-react";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"; 
 
 export default function HomePage() {
-  const [viewMode, setViewMode] = useState<"photos" | "timetables">("photos");
-  const [posts, setPosts] = useState<any[]>([]);
-  const [timetables, setTimetables] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { user } = useAuth();
   const router = useRouter();
+  
+  const [viewMode, setViewMode] = useState<"photos" | "timetables">("photos");
+  const [loading, setLoading] = useState(true);
+
+  const [allPosts, setAllPosts] = useState<any[]>([]);
+  const [allTimetables, setAllTimetables] = useState<any[]>([]);
+  const [friendIds, setFriendIds] = useState<string[]>([]);
 
   const handleLogout = async () => {
     await signOut(auth);
     router.push("/login");
   };
 
-  // データ取得
+  // 1. 友達リスト取得（自分含む）
+  useEffect(() => {
+    if (!user) return;
+    const qFriends = collection(db, "users", user.uid, "friends");
+    const unsubFriends = onSnapshot(qFriends, (snapshot) => {
+      const ids = snapshot.docs.map((doc) => doc.id);
+      setFriendIds([user.uid, ...ids]);
+    });
+    return () => unsubFriends();
+  }, [user]);
+
+  // 2. データ取得
   useEffect(() => {
     setLoading(true);
-
-    // 1. 写真（投稿）の取得
     const qPosts = query(collection(db, "posts"), orderBy("updatedAt", "desc"));
     const unsubPosts = onSnapshot(qPosts, (snapshot) => {
-      setPosts(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
-      // 写真モードならここでローディング完了
+      setAllPosts(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
       if (viewMode === "photos") setLoading(false);
     });
 
-    // 2. 時間割の取得（全件取得して表示）
-    // ※本来はフォロー中のみに絞るべきですが、まずは全件表示で動かします
     const qTimetables = query(collection(db, "timetables"), orderBy("updatedAt", "desc"));
     const unsubTimetables = onSnapshot(qTimetables, (snapshot) => {
-      setTimetables(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
-      // 予定モードならここでローディング完了
+      setAllTimetables(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
       if (viewMode === "timetables") setLoading(false);
     });
 
@@ -48,7 +59,10 @@ export default function HomePage() {
     };
   }, [viewMode]);
 
-  // 時間割表示用のヘルパー関数
+  // 3. フィルタリング
+  const visiblePosts = allPosts.filter((post) => friendIds.includes(post.uid));
+  const visibleTimetables = allTimetables.filter((tt) => friendIds.includes(tt.uid));
+
   const renderTimetable = (data: any) => {
     const days = [
       { key: "mon", label: "月" },
@@ -60,7 +74,6 @@ export default function HomePage() {
       { key: "sun", label: "日", weekend: true },
     ];
     
-    // 予定が1つでもあるかチェック
     const hasAny = days.some(d => data[d.key]);
     if (!hasAny) return <p className="text-sm text-gray-400 text-center py-2">予定なし</p>;
 
@@ -68,7 +81,7 @@ export default function HomePage() {
       <div className="space-y-2 mt-2">
         {days.map((day) => {
           const text = data[day.key];
-          if (!text) return null; // 予定がない曜日は表示しない
+          if (!text) return null;
           return (
             <div key={day.key} className="flex items-center text-sm">
               <span className={`
@@ -95,8 +108,6 @@ export default function HomePage() {
             <LogOut className="h-5 w-5 text-gray-500" />
           </Button>
         </div>
-
-        {/* ★タブ切り替えボタン */}
         <div className="flex p-1 bg-gray-100 rounded-lg">
           <button
             onClick={() => setViewMode("photos")}
@@ -119,19 +130,22 @@ export default function HomePage() {
         </div>
       </header>
 
-      {/* メインコンテンツ */}
       <main className="container mx-auto max-w-md p-4 space-y-4">
         {viewMode === "photos" ? (
-          // === 写真モード ===
-          posts.length === 0 ? (
+          visiblePosts.length === 0 ? (
             <div className="text-center py-10 text-gray-500">
-              <p>まだ投稿がありません。</p>
+              <p>表示できる投稿がありません。</p>
+              <p className="text-xs mt-2">友達を追加するか、自分で投稿してみよう！</p>
             </div>
           ) : (
-            posts.map((post) => (
+            visiblePosts.map((post) => (
               <Card key={post.id} className="overflow-hidden">
-                <CardHeader className="bg-gray-50 px-4 py-3 border-b">
-                  <div className="flex justify-between items-center">
+                <CardHeader className="flex flex-row items-center gap-3 bg-gray-50 px-4 py-3 border-b">
+                  <Avatar className="h-8 w-8">
+                    <AvatarImage src={post.userAvatar} />
+                    <AvatarFallback>{post.username?.[0]}</AvatarFallback>
+                  </Avatar>
+                  <div className="flex flex-1 justify-between items-center">
                      <CardTitle className="text-base font-bold">{post.username}</CardTitle>
                      <span className="text-xs text-gray-400">Real.</span>
                   </div>
@@ -148,13 +162,12 @@ export default function HomePage() {
             ))
           )
         ) : (
-          // === 予定モード ===
-          timetables.length === 0 ? (
+          visibleTimetables.length === 0 ? (
             <div className="text-center py-10 text-gray-500">
-              <p>まだ誰も予定を登録していません。</p>
+              <p>表示できる予定がありません。</p>
             </div>
           ) : (
-            timetables.map((item) => (
+            visibleTimetables.map((item) => (
               <Card key={item.id} className="overflow-hidden">
                 <CardHeader className="bg-gray-50 px-4 py-3 border-b">
                    <CardTitle className="text-base font-bold">{item.username} の予定</CardTitle>
@@ -168,7 +181,6 @@ export default function HomePage() {
         )}
       </main>
 
-      {/* 投稿ボタン（写真モードの時だけ表示） */}
       {viewMode === "photos" && (
         <div className="fixed bottom-20 right-6">
           <Button
@@ -179,8 +191,6 @@ export default function HomePage() {
           </Button>
         </div>
       )}
-      
-      {/* 予定編集ボタン（予定モードの時だけ表示） */}
       {viewMode === "timetables" && (
         <div className="fixed bottom-20 right-6">
           <Button

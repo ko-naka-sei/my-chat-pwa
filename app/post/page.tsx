@@ -15,29 +15,23 @@ export default function PostPage() {
   const router = useRouter();
   const [image, setImage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState("Real."); // デフォルトメッセージ
+  const [message, setMessage] = useState("Real.");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // 画像を選択して圧縮する処理
   const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // 画像読み込みと圧縮
     const reader = new FileReader();
     reader.onload = (event) => {
       const img = new Image();
       img.onload = () => {
         const canvas = document.createElement("canvas");
-        // 幅を600pxにリサイズ（Expo版と同じ）
         const scale = 600 / img.width;
         canvas.width = 600;
         canvas.height = img.height * scale;
-
         const ctx = canvas.getContext("2d");
         ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-        // JPEG, 品質0.5でBase64化
         const compressedBase64 = canvas.toDataURL("image/jpeg", 0.5);
         setImage(compressedBase64);
       };
@@ -51,23 +45,24 @@ export default function PostPage() {
     setLoading(true);
 
     try {
-      // ユーザー名を取得
+      // ユーザー情報（名前とアバター画像）を取得
       const userDoc = await getDoc(doc(db, "users", user.uid));
-      const username = userDoc.exists() ? userDoc.data().username : "名無し";
+      const userData = userDoc.exists() ? userDoc.data() : {};
+      const username = userData.username || "名無し";
+      const userAvatar = userData.avatarUrl || null; // ★ここを追加！
 
       // Firestoreに保存
-      // Expo版と同じくドキュメントIDをuidにして「1人1投稿」の仕様なら doc(db, 'posts', user.uid)
-      // 履歴を残すなら addDoc ですが、Expo版に合わせて上書き仕様にします
       await setDoc(doc(db, "posts", user.uid), {
         uid: user.uid,
         username: username,
+        userAvatar: userAvatar, // ★一緒に保存する！
         photoUrl: image,
         message: message,
         updatedAt: serverTimestamp(),
       });
 
       alert("投稿しました！");
-      router.push("/"); // ホームに戻る
+      router.push("/");
     } catch (e: any) {
       alert("エラー: " + e.message);
     } finally {
@@ -85,8 +80,6 @@ export default function PostPage() {
           <CardTitle>投稿する</CardTitle>
         </CardHeader>
         <CardContent className="space-y-6">
-          
-          {/* プレビューエリア */}
           <div 
             className="relative flex aspect-[3/4] w-full items-center justify-center overflow-hidden rounded-lg bg-gray-200 cursor-pointer"
             onClick={() => fileInputRef.current?.click()}
@@ -99,26 +92,19 @@ export default function PostPage() {
                 <span>写真を撮る / 選択</span>
               </div>
             )}
-            
-            {/* 隠しファイル入力 */}
             <input
               type="file"
               accept="image/*"
-              capture="environment" // スマホでカメラを直接起動する属性
               ref={fileInputRef}
               className="hidden"
               onChange={handleImageSelect}
             />
           </div>
-
-          {/* メッセージ入力 */}
           <Input 
             value={message} 
             onChange={(e) => setMessage(e.target.value)} 
             placeholder="ひとこと..."
           />
-
-          {/* アクションボタン */}
           <div className="flex gap-4">
             {image && (
               <Button 
@@ -141,7 +127,6 @@ export default function PostPage() {
               投稿する 🚀
             </Button>
           </div>
-
         </CardContent>
       </Card>
     </div>

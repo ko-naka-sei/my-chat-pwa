@@ -1,17 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { collection, query, orderBy, onSnapshot, getDocs } from "firebase/firestore";
+import { collection, query, orderBy, onSnapshot } from "firebase/firestore";
 import { db, auth } from "@/lib/firebase";
 import { signOut } from "firebase/auth";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, LogOut, Camera, Calendar, Coffee, User } from "lucide-react";
+import { Plus, LogOut, Camera, Calendar, Coffee } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"; 
 
-// ★時限ごとの時間定義
+// ★時限設定 (09:10開始版)
 const PERIODS = [
   { id: 1, label: "1限", start: "09:10", end: "10:40" },
   { id: 2, label: "2限", start: "10:50", end: "12:20" },
@@ -33,10 +33,10 @@ export default function HomePage() {
   const [allTimetables, setAllTimetables] = useState<any[]>([]);
   const [friendIds, setFriendIds] = useState<string[]>([]);
   
-  // 最新のユーザー情報（アイコン用）
+  // 最新ユーザー情報（アイコン用）
   const [userProfiles, setUserProfiles] = useState<Record<string, any>>({});
 
-  // 「今、暇な人」リスト
+  // 暇な人リスト
   const [freeFriends, setFreeFriends] = useState<any[]>([]);
   const [currentStatus, setCurrentStatus] = useState<string>("");
 
@@ -45,7 +45,7 @@ export default function HomePage() {
     router.push("/login");
   };
 
-  // 1. ユーザー情報（全件）を監視して、アイコン辞書を作る
+  // 1. 全ユーザー情報の監視（アイコン用）
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "users"), (snapshot) => {
       const profiles: Record<string, any> = {};
@@ -89,22 +89,20 @@ export default function HomePage() {
     };
   }, [viewMode]);
 
-  // ★変更点：「今、暇な人」を計算するロジック（時間指定対応版）
+  // ★4. 「今、暇な人」計算ロジック（最強版）
   useEffect(() => {
     if (allTimetables.length === 0 || friendIds.length === 0) return;
 
     const now = new Date();
-    const dayIndex = now.getDay(); // 0=日, 1=月...
+    const dayIndex = now.getDay(); 
     const days = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
     const currentDayKey = days[dayIndex];
-    const currentHour = now.getHours(); // 現在の「時」（例: 17）
-
-    // 現在時刻を "HH:MM" 形式に
+    const currentHour = now.getHours(); 
+    
     const currentHmm = currentHour.toString().padStart(2, '0') + ":" + now.getMinutes().toString().padStart(2, '0');
 
     // 今が何限か判定
     let periodLabel = "時間外";
-
     if (dayIndex === 0 || dayIndex === 6) {
       periodLabel = "休日";
     } else {
@@ -115,80 +113,114 @@ export default function HomePage() {
         }
       }
     }
-
     setCurrentStatus(`${periodLabel} (${currentHmm})`);
 
-    // ★ヘルパー関数：テキスト内の時間指定（17-20など）を解析して、今が忙しいか判定
-    const isBusyNowByTime = (text: string, currentH: number) => {
-      // 正規表現：数字 + (区切り文字) + 数字 を探す
-      // 例: "17-20", "17:00〜20:00", "9時~12時" などに対応
-      const timeRangeRegex = /([0-9]{1,2})(?:[:時][0-9]{2})?\s*[〜~-]\s*([0-9]{1,2})(?:[:時][0-9]{2})?/g;
-      
+    // ▼▼▼ ここから判定魔法 ▼▼▼
+    const isBusyNowByMagic = (rawText: string, currentH: number) => {
+      if (!rawText) return { isBusy: false, hasRange: false };
+
+      // 1. 文字列の正規化（全角→半角、表記ゆれ統一）
+      let text = rawText
+        .replace(/[０-９]/g, (s) => String.fromCharCode(s.charCodeAt(0) - 0xFEE0))
+        .replace(/[：]/g, ":")
+        .replace(/時/g, ":")
+        .replace(/半/g, ":30")
+        .replace(/[〜～−ー]/g, "-")
+        .replace(/から/g, "-")
+        .replace(/まで/g, "until");
+
+      // 【パターンA】範囲指定 "17-21" "17:00-21:30"
+      const rangeRegex = /([0-9]{1,2})(?::[0-9]{2})?\s*-\s*([0-9]{1,2})(?::[0-9]{2})?/g;
       let match;
-      let hasTimeRange = false;
-
-      // テキスト内のすべての時間範囲をチェック
-      while ((match = timeRangeRegex.exec(text)) !== null) {
-        hasTimeRange = true;
-        const start = parseInt(match[1], 10);
-        const end = parseInt(match[2], 10);
-
-        if (start >= 0 && start <= 24 && end >= 0 && end <= 24) {
-          // 指定範囲内なら「忙しい」
-          if (currentH >= start && currentH < end) {
-            return { isBusy: true, hasRange: true };
-          }
+      while ((match = rangeRegex.exec(text)) !== null) {
+        const start = parseInt(match[1]);
+        const end = parseInt(match[2]);
+        if (start <= 29 && end <= 29) {
+           // 現在時刻が範囲内なら忙しい
+           if (currentH >= start && currentH < end) return { isBusy: true, hasRange: true };
+           // 日付またぎ (22-2) の場合
+           if (start > end) {
+              if (currentH >= start || currentH < end) return { isBusy: true, hasRange: true };
+           }
         }
       }
-      // 時間指定は見つかったけど、今の時間は範囲外だった場合 -> 暇
-      if (hasTimeRange) return { isBusy: false, hasRange: true };
 
-      // 時間指定自体が書いてなかった場合
+      // 【パターンB】終了指定 "16until" (-16)
+      if (text.includes("until") || text.includes("-")) {
+         // untilの直前の数字
+         const matchUntil = /([0-9]{1,2})(?::[0-9]{2})?\s*until/.exec(text);
+         if (matchUntil) {
+            const end = parseInt(matchUntil[1]);
+            // 今が終了時間より前なら忙しい
+            if (currentH < end) return { isBusy: true, hasRange: true };
+         }
+         // 行頭のハイフン (-16)
+         const matchHyphenStart = /^\s*-\s*([0-9]{1,2})/.exec(text);
+         if (matchHyphenStart) {
+            const end = parseInt(matchHyphenStart[1]);
+            if (currentH < end) return { isBusy: true, hasRange: true };
+         }
+      }
+
+      // 【パターンC】開始指定 "17-"
+      const fromRegex = /([0-9]{1,2})(?::[0-9]{2})?\s*-/g;
+      while ((match = fromRegex.exec(text)) !== null) {
+         // 後ろに数字がないことを確認
+         const idx = match.index + match[0].length;
+         const nextCharIsDigit = /[0-9]/.test(text.substring(idx, idx+1));
+         if (!nextCharIsDigit) {
+            const start = parseInt(match[1]);
+            // 今が開始時間以降なら忙しい
+            if (currentH >= start) return { isBusy: true, hasRange: true };
+         }
+      }
+
+      // 数字が含まれているのに上記にヒットしなかった場合（＝今は範囲外＝暇）
+      if (/[0-9]/.test(text)) {
+         return { isBusy: false, hasRange: true };
+      }
+
       return { isBusy: false, hasRange: false };
     };
+    // ▲▲▲ 判定魔法ここまで ▲▲▲
+
 
     // 暇な人を抽出
     const freePeople = allTimetables.filter(tt => {
-      // 1. 友達（または自分）である
+      // 1. 友達＆自分除外チェック
       if (!friendIds.includes(tt.uid)) return false;
-
-      // 2. 自分が計算対象なら除外
       if (tt.uid === user?.uid) return false;
 
-      // 今日の予定テキストを取得
       const daySchedule = tt[currentDayKey] || "";
 
-      // NGワード（時間指定がない場合の保険）
-      const busyKeywords = ["バイト", "仕事", "用事", "部活", "サークル"];
-      const hasBusyKeyword = busyKeywords.some(w => daySchedule.includes(w));
+      // 2. NGワードチェック
+      const busyKeywords = ["バイト", "仕事", "用事", "部活", "サークル", "mtg", "会議"];
+      const hasBusyKeyword = busyKeywords.some(w => daySchedule.toLowerCase().includes(w));
 
-      // ★時間指定チェック！
-      const timeCheck = isBusyNowByTime(daySchedule, currentHour);
+      // 3. 時間指定チェック
+      const timeCheck = isBusyNowByMagic(daySchedule, currentHour);
 
-      // パターンA：時間指定が見つかった場合（例：「17-20 バイト」）
+      // 時間指定ありの場合
       if (timeCheck.hasRange) {
-        // 時間内なら「忙しい」、時間外なら「暇」
-        if (timeCheck.isBusy) return false; 
-        return true; 
+        // 「今は忙しい」ならfalse、「今は忙しくない」ならtrue(暇)
+        return !timeCheck.isBusy;
       }
 
-      // パターンB：時間指定はないけど、NGワードがある場合（例：「バイト」とだけある）
+      // 時間指定なし、NGワードありの場合
       if (hasBusyKeyword) {
-        // 何時かわからないので、念のため非表示
-        return false; 
+        return false; // 時間不明なので一律非表示
       }
 
-      // パターンC：授業時間の判定（平日で、かつ時間外・昼休み以外）
+      // 4. 授業時間チェック（平日の場合）
       if (periodLabel !== "休日" && periodLabel !== "時間外" && periodLabel !== "昼休") {
         const currentPeriodNum = PERIODS.find(p => p.label === periodLabel)?.id;
         if (currentPeriodNum) {
-           // "2限" などの文字が含まれていたら授業中
            const hasClass = daySchedule.includes(`${currentPeriodNum}限`) || daySchedule.includes(`${currentPeriodNum}げん`);
            if (hasClass) return false;
         }
       }
 
-      // ここまで引っかからなければ「暇」！
+      // ここまでクリアしたら暇！
       return true;
     });
 
@@ -197,11 +229,11 @@ export default function HomePage() {
   }, [allTimetables, friendIds, user]);
 
 
-  // フィルタリング（友達のみ）
+  // フィルタリング
   const visiblePosts = allPosts.filter((post) => friendIds.includes(post.uid));
   const visibleTimetables = allTimetables.filter((tt) => friendIds.includes(tt.uid));
 
-  // 時間割レンダリング関数
+  // 時間割レンダリング
   const renderTimetable = (data: any) => {
     const days = [
       { key: "mon", label: "月" }, { key: "tue", label: "火" }, { key: "wed", label: "水" },
@@ -237,7 +269,7 @@ export default function HomePage() {
           </Button>
         </div>
 
-        {/* タブ切り替え */}
+        {/* タブ */}
         <div className="flex p-1 bg-gray-100 rounded-lg">
           <button onClick={() => setViewMode("photos")} className={`flex-1 flex items-center justify-center py-2 rounded-md text-sm font-bold transition-all ${viewMode === "photos" ? "bg-white shadow text-black" : "text-gray-500"}`}>
             <Camera className="w-4 h-4 mr-2" /> 写真
@@ -250,7 +282,7 @@ export default function HomePage() {
 
       <main className="container mx-auto max-w-md p-4 space-y-4">
         
-        {/* 暇人レーダー（写真モードの時だけ表示） */}
+        {/* 暇人レーダー */}
         {viewMode === "photos" && (
           <div className="mb-6">
             <div className="flex items-center justify-between mb-2 px-1">
@@ -288,7 +320,8 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* コンテンツ表示エリア */}
+
+        {/* コンテンツ */}
         {viewMode === "photos" ? (
           visiblePosts.length === 0 ? (
             <div className="text-center py-10 text-gray-500">
@@ -303,7 +336,7 @@ export default function HomePage() {
                 <Card key={post.id} className="overflow-hidden">
                   <CardHeader className="flex flex-row items-center gap-3 bg-gray-50 px-4 py-3 border-b">
                     <Avatar className="h-8 w-8">
-                      <AvatarImage src={currentAvatar} />
+                      <AvatarImage src={currentAvatar} /> 
                       <AvatarFallback>{post.username?.[0]}</AvatarFallback>
                     </Avatar>
                     <div className="flex flex-1 justify-between items-center">

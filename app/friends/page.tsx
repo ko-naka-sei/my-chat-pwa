@@ -1,7 +1,8 @@
+//  app/friends/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
-import { collection, onSnapshot, addDoc, query, where, getDocs, serverTimestamp, doc, updateDoc, arrayUnion } from "firebase/firestore";
+import { collection, onSnapshot, addDoc, query, where, getDocs, serverTimestamp, doc, updateDoc, arrayUnion,setDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/context/AuthContext";
 import { Card, CardContent } from "@/components/ui/card";
@@ -12,8 +13,8 @@ import { Search, UserPlus, Check, MessageCircle, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 export default function FriendsPage() {
-  const { user } = useAuth();
-  const router = useRouter();
+  const { user } = useAuth();// ログイン中のユーザー情報
+  const router = useRouter();// ルーター（ページ遷移用）
   
   const [keyword, setKeyword] = useState("");
   const [searchResults, setSearchResults] = useState<any[]>([]);
@@ -34,8 +35,9 @@ export default function FriendsPage() {
   useEffect(() => {
     if (!user) return;
     const q = query(collection(db, "users", user.uid, "friendRequests"), where("status", "==", "pending"));
+    
     const unsub = onSnapshot(q, (snap) => {
-      setRequests(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      setRequests(snap.docs.map(d => ({ id: d.id, ...d.data() })));// 未処理の申請のみセット
     });
     return () => unsub();
   }, [user]);
@@ -44,7 +46,8 @@ export default function FriendsPage() {
   const handleSearch = async () => {
     if (!keyword.trim()) return;
     const q = query(collection(db, "users")); 
-    const snapshot = await getDocs(q);
+    const snapshot = await getDocs(q);// 全ユーザーを取得
+    // キーワードを含むユーザーをフィルタリング（自分自身は除外）
     const found = snapshot.docs
       .map(doc => ({ id: doc.id, ...doc.data() }))
       .filter((u: any) => u.username?.includes(keyword) && u.id !== user?.uid);
@@ -57,7 +60,7 @@ export default function FriendsPage() {
     await addDoc(collection(db, "users", targetId, "friendRequests"), {
       fromUid: user.uid,
       fromName: user.email, // usernameがあればそちら推奨
-      status: "pending",
+      status: "pending",    // 未処理
       createdAt: serverTimestamp(),
     });
     alert("申請を送りました");
@@ -97,10 +100,10 @@ export default function FriendsPage() {
         collection(db, "chats"), 
         where("participants", "array-contains", user.uid)
       );
-      const snapshot = await getDocs(q);
+      const snapshot = await getDocs(q);// 自分が参加しているチャットを取得
       
       let existingChatId = null;
-
+      // 参加者に相手が含まれているチャットを探す
       snapshot.forEach(doc => {
         const data = doc.data();
         if (data.participants.includes(friendId)) {
@@ -129,8 +132,6 @@ export default function FriendsPage() {
     }
   };
 
-  // setDocを使うためのインポート追加忘れ防止
-  const { setDoc } = require("firebase/firestore");
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24 p-4">

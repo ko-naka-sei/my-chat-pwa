@@ -11,14 +11,14 @@ import { Button } from "@/components/ui/button";
 import { Plus, LogOut, Camera, Calendar, Coffee, User } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"; 
 
-// ★時限ごとの時間定義（あなたの大学に合わせて調整してください）
+// ★時限ごとの時間定義
 const PERIODS = [
-  { id: 1, label: "1限", start: "09:00", end: "10:30" },
-  { id: 2, label: "2限", start: "10:40", end: "12:10" },
-  { id: 3, label: "昼休", start: "12:10", end: "13:00" }, // 昼休みも定義
-  { id: 4, label: "3限", start: "13:00", end: "14:30" },
-  { id: 5, label: "4限", start: "14:40", end: "16:10" },
-  { id: 6, label: "5限", start: "16:20", end: "17:50" },
+  { id: 1, label: "1限", start: "09:10", end: "10:40" },
+  { id: 2, label: "2限", start: "10:50", end: "12:20" },
+  { id: 3, label: "昼休", start: "12:20", end: "13:10" }, 
+  { id: 4, label: "3限", start: "13:10", end: "14:40" },
+  { id: 5, label: "4限", start: "14:50", end: "16:20" },
+  { id: 6, label: "5限", start: "16:30", end: "18:00" },
 ];
 
 export default function HomePage() {
@@ -33,10 +33,10 @@ export default function HomePage() {
   const [allTimetables, setAllTimetables] = useState<any[]>([]);
   const [friendIds, setFriendIds] = useState<string[]>([]);
   
-  // ★追加: 最新のユーザー情報（アイコン用）を保持する辞書
+  // 最新のユーザー情報（アイコン用）
   const [userProfiles, setUserProfiles] = useState<Record<string, any>>({});
 
-  // ★追加: 「今、暇な人」リスト
+  // 「今、暇な人」リスト
   const [freeFriends, setFreeFriends] = useState<any[]>([]);
   const [currentStatus, setCurrentStatus] = useState<string>("");
 
@@ -46,7 +46,6 @@ export default function HomePage() {
   };
 
   // 1. ユーザー情報（全件）を監視して、アイコン辞書を作る
-  // これで「画像を変えたら過去の投稿も変わる」ようになります
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "users"), (snapshot) => {
       const profiles: Record<string, any> = {};
@@ -64,7 +63,7 @@ export default function HomePage() {
     const qFriends = collection(db, "users", user.uid, "friends");
     const unsubFriends = onSnapshot(qFriends, (snapshot) => {
       const ids = snapshot.docs.map((doc) => doc.id);
-      setFriendIds([user.uid, ...ids]); // 自分も含める
+      setFriendIds([user.uid, ...ids]); 
     });
     return () => unsubFriends();
   }, [user]);
@@ -90,7 +89,7 @@ export default function HomePage() {
     };
   }, [viewMode]);
 
-  // ★追加: 「今、暇な人」を計算するロジック
+  // ★変更点：「今、暇な人」を計算するロジック（時間指定対応版）
   useEffect(() => {
     if (allTimetables.length === 0 || friendIds.length === 0) return;
 
@@ -98,28 +97,20 @@ export default function HomePage() {
     const dayIndex = now.getDay(); // 0=日, 1=月...
     const days = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
     const currentDayKey = days[dayIndex];
+    const currentHour = now.getHours(); // 現在の「時」（例: 17）
 
     // 現在時刻を "HH:MM" 形式に
-    const currentHmm = now.getHours().toString().padStart(2, '0') + ":" + now.getMinutes().toString().padStart(2, '0');
+    const currentHmm = currentHour.toString().padStart(2, '0') + ":" + now.getMinutes().toString().padStart(2, '0');
 
     // 今が何限か判定
-    let periodKey: string | null = null;
     let periodLabel = "時間外";
 
-    // 休日判定
     if (dayIndex === 0 || dayIndex === 6) {
       periodLabel = "休日";
-      // 休日は全員暇とする
-      periodKey = "Holiday"; 
     } else {
-      // 平日の場合、PERIODSと比較
       for (const p of PERIODS) {
         if (currentHmm >= p.start && currentHmm <= p.end) {
           periodLabel = p.label;
-          // 昼休み(3)は特別扱い、それ以外は timetables のキーに対応させる
-          // ※今回は簡易的に、昼休みは全員暇とします
-          if (p.id === 3) periodKey = "Lunch"; 
-          else periodKey = "now"; // 授業中
           break;
         }
       }
@@ -127,40 +118,78 @@ export default function HomePage() {
 
     setCurrentStatus(`${periodLabel} (${currentHmm})`);
 
+    // ★ヘルパー関数：テキスト内の時間指定（17-20など）を解析して、今が忙しいか判定
+    const isBusyNowByTime = (text: string, currentH: number) => {
+      // 正規表現：数字 + (区切り文字) + 数字 を探す
+      // 例: "17-20", "17:00〜20:00", "9時~12時" などに対応
+      const timeRangeRegex = /([0-9]{1,2})(?:[:時][0-9]{2})?\s*[〜~-]\s*([0-9]{1,2})(?:[:時][0-9]{2})?/g;
+      
+      let match;
+      let hasTimeRange = false;
+
+      // テキスト内のすべての時間範囲をチェック
+      while ((match = timeRangeRegex.exec(text)) !== null) {
+        hasTimeRange = true;
+        const start = parseInt(match[1], 10);
+        const end = parseInt(match[2], 10);
+
+        if (start >= 0 && start <= 24 && end >= 0 && end <= 24) {
+          // 指定範囲内なら「忙しい」
+          if (currentH >= start && currentH < end) {
+            return { isBusy: true, hasRange: true };
+          }
+        }
+      }
+      // 時間指定は見つかったけど、今の時間は範囲外だった場合 -> 暇
+      if (hasTimeRange) return { isBusy: false, hasRange: true };
+
+      // 時間指定自体が書いてなかった場合
+      return { isBusy: false, hasRange: false };
+    };
+
     // 暇な人を抽出
     const freePeople = allTimetables.filter(tt => {
       // 1. 友達（または自分）である
       if (!friendIds.includes(tt.uid)) return false;
 
-      // 2. 自分が計算対象なら除外（友達を探したいので）
+      // 2. 自分が計算対象なら除外
       if (tt.uid === user?.uid) return false;
 
-      // 休日や昼休みなら全員暇
-      if (periodLabel === "休日" || periodLabel === "昼休") return true;
-
-      // 時間外（夜や朝）なら全員暇
-      if (periodLabel === "時間外") return true;
-
-      // 授業時間の場合、その人の時間割を見る
-      // 現在の曜日の、現在の時限に対応するデータが「空文字」なら暇
-      // ※注意：ここは「何限か」を特定して判定する必要がありますが、
-      // 簡易実装として「時間割データを見て、その曜日に文字が入っていなければ暇」という単純化は難しいので、
-      // 今回は【現在時刻が授業時間帯に含まれていて】かつ【その曜日の入力欄にその時限の記述がない】判定をします。
-      
-      // しかし、今のDB構造は "mon": "1限: 数学, 3限: 英語" のような自由入力テキストです。
-      // なので、正確に判定するのは難しいです。
-      // ★代案アプローチ： 「その曜日のテキストに、今の時限（例: '2限'）という文字が含まれていなければ暇」と判定します。
+      // 今日の予定テキストを取得
       const daySchedule = tt[currentDayKey] || "";
-      
-      // 例えば今が2限なら、"2限" という文字が含まれていれば授業あり、なければ暇。
-      // ※ユーザーが "2限空き" と書くと誤判定しますが、そこは運用でカバー
-      const currentPeriodNum = PERIODS.find(p => p.label === periodLabel)?.id;
-      if (!currentPeriodNum) return true; // 特定できなければ暇扱い
-      
-      // "1限", "１限" などの表記揺れ対策
-      const hasClass = daySchedule.includes(`${currentPeriodNum}限`) || daySchedule.includes(`${currentPeriodNum}げん`);
-      
-      return !hasClass; // 授業という文字がなければ「暇」
+
+      // NGワード（時間指定がない場合の保険）
+      const busyKeywords = ["バイト", "仕事", "用事", "部活", "サークル"];
+      const hasBusyKeyword = busyKeywords.some(w => daySchedule.includes(w));
+
+      // ★時間指定チェック！
+      const timeCheck = isBusyNowByTime(daySchedule, currentHour);
+
+      // パターンA：時間指定が見つかった場合（例：「17-20 バイト」）
+      if (timeCheck.hasRange) {
+        // 時間内なら「忙しい」、時間外なら「暇」
+        if (timeCheck.isBusy) return false; 
+        return true; 
+      }
+
+      // パターンB：時間指定はないけど、NGワードがある場合（例：「バイト」とだけある）
+      if (hasBusyKeyword) {
+        // 何時かわからないので、念のため非表示
+        return false; 
+      }
+
+      // パターンC：授業時間の判定（平日で、かつ時間外・昼休み以外）
+      if (periodLabel !== "休日" && periodLabel !== "時間外" && periodLabel !== "昼休") {
+        const currentPeriodNum = PERIODS.find(p => p.label === periodLabel)?.id;
+        if (currentPeriodNum) {
+           // "2限" などの文字が含まれていたら授業中
+           const hasClass = daySchedule.includes(`${currentPeriodNum}限`) || daySchedule.includes(`${currentPeriodNum}げん`);
+           if (hasClass) return false;
+        }
+      }
+
+      // ここまで引っかからなければ「暇」！
+      return true;
     });
 
     setFreeFriends(freePeople);
@@ -221,7 +250,7 @@ export default function HomePage() {
 
       <main className="container mx-auto max-w-md p-4 space-y-4">
         
-        {/* ★新機能：暇人レーダー（写真モードの時だけ表示） */}
+        {/* 暇人レーダー（写真モードの時だけ表示） */}
         {viewMode === "photos" && (
           <div className="mb-6">
             <div className="flex items-center justify-between mb-2 px-1">
@@ -259,7 +288,6 @@ export default function HomePage() {
           </div>
         )}
 
-
         {/* コンテンツ表示エリア */}
         {viewMode === "photos" ? (
           visiblePosts.length === 0 ? (
@@ -268,16 +296,14 @@ export default function HomePage() {
             </div>
           ) : (
             visiblePosts.map((post) => {
-              // ★修正ポイント: post内の古いデータではなく、userProfilesから最新情報を取得
               const profile = userProfiles[post.uid] || {};
-              const currentAvatar = profile.avatarUrl; // 最新のアバター
-              // 名前も最新にするなら profile.username を使いますが、今回はアバターのみ修正
+              const currentAvatar = profile.avatarUrl; 
 
               return (
                 <Card key={post.id} className="overflow-hidden">
                   <CardHeader className="flex flex-row items-center gap-3 bg-gray-50 px-4 py-3 border-b">
                     <Avatar className="h-8 w-8">
-                      <AvatarImage src={currentAvatar} /> {/* ★ここが最新になる */}
+                      <AvatarImage src={currentAvatar} />
                       <AvatarFallback>{post.username?.[0]}</AvatarFallback>
                     </Avatar>
                     <div className="flex flex-1 justify-between items-center">
@@ -298,7 +324,6 @@ export default function HomePage() {
             })
           )
         ) : (
-          // 予定モード
           visibleTimetables.length === 0 ? (
             <div className="text-center py-10 text-gray-500">
               <p>表示できる予定がありません。</p>

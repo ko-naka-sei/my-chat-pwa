@@ -1,5 +1,5 @@
+//  app/chat/[chatId]/page.tsx
 "use client";
-
 import { useState, useEffect, useRef } from "react";
 import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, setDoc, doc, updateDoc, getDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
@@ -11,8 +11,8 @@ import { Send, ArrowLeft, Image as ImageIcon } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 export default function ChatRoomPage() {
-  const { user } = useAuth();
-  const { chatId } = useParams(); // ★修正: フォルダ名に合わせて chatId を取得
+  const { user } = useAuth();   // ログイン中のユーザー情報
+  const { chatId } = useParams(); // URLパラメータからチャットIDを取得
   const router = useRouter();
 
   const [messages, setMessages] = useState<any[]>([]);
@@ -28,23 +28,24 @@ export default function ChatRoomPage() {
   useEffect(() => {
     if (!user || !chatId) return;
 
+    // チャット参加者のうち、自分以外のユーザーIDを取得
     const fetchFriendInfo = async () => {
-      // まずチャット部屋の情報を取得して、相手のIDを調べる
       const chatDocRef = doc(db, "chats", chatId as string);
-      const chatDoc = await getDoc(chatDocRef);
+      const chatDoc = await getDoc(chatDocRef); 
       
       if (chatDoc.exists()) {
         const data = chatDoc.data();
         // participants配列から「自分じゃない方」を探す
         const otherUserId = data.participants?.find((id: string) => id !== user.uid);
 
+        
         if (otherUserId) {
           // 相手のユーザー情報をリアルタイム監視
           const unsubUser = onSnapshot(doc(db, "users", otherUserId), (doc) => {
             if (doc.exists()) {
               const userData = doc.data();
-              setFriendName(userData.username || "名無し");
-              setFriendAvatar(userData.avatarUrl || null); // ★最新画像
+              setFriendName(userData.username || "名無し");  // 最新の名前をセット
+              setFriendAvatar(userData.avatarUrl || null);  // 最新の画像URLをセット
             }
           });
           return () => unsubUser();
@@ -54,34 +55,33 @@ export default function ChatRoomPage() {
     fetchFriendInfo();
   }, [chatId, user]);
 
-  // 2. メッセージの監視
+  // 2. メッセージのリアルタイム取得
   useEffect(() => {
     if (!chatId) return;
 
-    // ★修正: コレクション名を "chats" に統一
+    // クエリ作成: chatIdに紐づくメッセージを取得、作成日時順に並べる
     const q = query(
       collection(db, "chats", chatId as string, "messages"),
       orderBy("createdAt", "asc")
     );
-
+    // リアルタイム監視
     const unsubscribe = onSnapshot(q, (snapshot) => {
       setMessages(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
-      setTimeout(() => scrollRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+      setTimeout(() => scrollRef.current?.scrollIntoView({ behavior: "smooth" }), 100);// メッセージ取得後にスクロール
     });
 
     return () => unsubscribe();
   }, [chatId]);
 
-  // 送信処理
+  // メッセージ送信処理
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || !user) return;
 
-    const textToSend = input;
-    setInput("");
+    const textToSend = input;// 送信前に変数に保存
+    setInput("");// 送信後に入力欄をクリア
 
     try {
-      // ★修正: コレクション名を "chats" に統一
       // 1. メッセージ追加
       await addDoc(collection(db, "chats", chatId as string, "messages"), {
         text: textToSend,

@@ -1,5 +1,5 @@
+//  app/chat/page.tsx
 "use client";
-
 import { useEffect, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { collection, query, where, onSnapshot, orderBy } from "firebase/firestore";
@@ -10,20 +10,20 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { MessageCircle } from "lucide-react";
 
 export default function ChatListPage() {
-  const { user } = useAuth();
-  const router = useRouter();
-  const [threads, setThreads] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { user } = useAuth();// ログイン中のユーザー情報
+  const router = useRouter();// ルーター（ページ遷移用）
+  const [threads, setThreads] = useState<any[]>([]);// チャットルームのリスト一覧
+  const [loading, setLoading] = useState(true);//読み込み中かどうか管理
   
-  // ★追加：最新のユーザー情報を保持する辞書
+  // 辞書型で全ユーザープロフィールを保存
   const [userProfiles, setUserProfiles] = useState<Record<string, any>>({});
 
-  // 1. 全ユーザーの最新プロフィールを取得（ホーム画面と同じ仕組み）
+  // 1. 全ユーザープロフィールを取得して辞書に保存
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "users"), (snapshot) => {
       const profiles: Record<string, any> = {};
       snapshot.docs.forEach(doc => {
-        profiles[doc.id] = doc.data();
+        profiles[doc.id] = doc.data();// ユーザーIDをキーにしてデータを保存
       });
       setUserProfiles(profiles);
     });
@@ -71,7 +71,7 @@ export default function ChatListPage() {
             // 相手のIDを特定（自分じゃない方のID）
             const otherUserId = thread.participants.find((id: string) => id !== user?.uid);
             
-            // ★修正：辞書から最新の相手情報を取得
+            // 相手のプロフィール情報を辞書から取得
             const otherUser = userProfiles[otherUserId] || {}; 
             const friendName = otherUser.username || "不明なユーザー";
             const friendAvatar = otherUser.avatarUrl; // 最新のアバター画像

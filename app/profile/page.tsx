@@ -122,7 +122,7 @@ export default function ProfilePage() {
         </div>
 
         <div className="text-center w-full">
-          <p className="font-bold text-lg mb-4">{user?.email}</p>
+          <p className="font-bold text-lg mb-4">{(user as any)?.username}</p>
           
           <Button onClick={handleSave} disabled={loading} className="w-full mb-4">
             {loading ? <Loader2 className="animate-spin mr-2" /> : <Save className="mr-2 h-4 w-4" />}

@@ -1,8 +1,7 @@
-//  app/friends/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
-import { collection, onSnapshot, addDoc, query, where, getDocs, serverTimestamp, doc, updateDoc, arrayUnion,setDoc } from "firebase/firestore";
+import { collection, onSnapshot, addDoc, query, where, getDocs, serverTimestamp, doc, updateDoc, setDoc, getDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/context/AuthContext";
 import { Card, CardContent } from "@/components/ui/card";
@@ -13,8 +12,8 @@ import { Search, UserPlus, Check, MessageCircle, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 export default function FriendsPage() {
-  const { user } = useAuth();// ログイン中のユーザー情報
-  const router = useRouter();// ルーター（ページ遷移用）
+  const { user } = useAuth();
+  const router = useRouter();
   
   const [keyword, setKeyword] = useState("");
   const [searchResults, setSearchResults] = useState<any[]>([]);
@@ -22,7 +21,37 @@ export default function FriendsPage() {
   const [requests, setRequests] = useState<any[]>([]);
   const [loadingChat, setLoadingChat] = useState(false);
 
-  // 1. 友達リストの監視
+  // ★追加: 最新のユーザー情報を保持する辞書（名前表示用）
+  const [userProfiles, setUserProfiles] = useState<Record<string, any>>({});
+  // ★追加: 自分のユーザー名
+  const [myUsername, setMyUsername] = useState("");
+
+  // 1. 全ユーザーの最新プロフィールを取得して辞書を作る
+  // これで「登録時の古い名前（メール）」ではなく「現在の正しい名前」が表示されます
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "users"), (snapshot) => {
+      const profiles: Record<string, any> = {};
+      snapshot.docs.forEach(doc => {
+        profiles[doc.id] = doc.data();
+      });
+      setUserProfiles(profiles);
+    });
+    return () => unsub();
+  }, []);
+
+  // 2. 自分の最新情報を取得（申請を送るとき用）
+  useEffect(() => {
+    if (!user) return;
+    const fetchMe = async () => {
+      const docSnap = await getDoc(doc(db, "users", user.uid));
+      if (docSnap.exists()) {
+        setMyUsername(docSnap.data().username || "名無し");
+      }
+    };
+    fetchMe();
+  }, [user]);
+
+  // 3. 友達リストの監視
   useEffect(() => {
     if (!user) return;
     const unsub = onSnapshot(collection(db, "users", user.uid, "friends"), (snap) => {
@@ -31,13 +60,12 @@ export default function FriendsPage() {
     return () => unsub();
   }, [user]);
 
-  // 2. 友達申請の監視
+  // 4. 友達申請の監視
   useEffect(() => {
     if (!user) return;
     const q = query(collection(db, "users", user.uid, "friendRequests"), where("status", "==", "pending"));
-    
     const unsub = onSnapshot(q, (snap) => {
-      setRequests(snap.docs.map(d => ({ id: d.id, ...d.data() })));// 未処理の申請のみセット
+      setRequests(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
     return () => unsub();
   }, [user]);
@@ -46,8 +74,7 @@ export default function FriendsPage() {
   const handleSearch = async () => {
     if (!keyword.trim()) return;
     const q = query(collection(db, "users")); 
-    const snapshot = await getDocs(q);// 全ユーザーを取得
-    // キーワードを含むユーザーをフィルタリング（自分自身は除外）
+    const snapshot = await getDocs(q);
     const found = snapshot.docs
       .map(doc => ({ id: doc.id, ...doc.data() }))
       .filter((u: any) => u.username?.includes(keyword) && u.id !== user?.uid);
@@ -55,12 +82,16 @@ export default function FriendsPage() {
   };
 
   // 申請を送る
-  const sendRequest = async (targetId: string, targetName: string) => {
+  const sendRequest = async (targetId: string) => {
     if (!user) return;
+    
+    // ★修正: 自分の正しい名前(myUsername)を送るようにしました
+    const nameToSend = myUsername || user.email;
+
     await addDoc(collection(db, "users", targetId, "friendRequests"), {
       fromUid: user.uid,
-      fromName: user.email, // usernameがあればそちら推奨
-      status: "pending",    // 未処理
+      fromName: nameToSend, 
+      status: "pending",
       createdAt: serverTimestamp(),
     });
     alert("申請を送りました");
@@ -69,27 +100,23 @@ export default function FriendsPage() {
   // 申請を承認
   const acceptRequest = async (req: any) => {
     if (!user) return;
-    // 申請ステータス更新
+    
     await updateDoc(doc(db, "users", user.uid, "friendRequests", req.id), { status: "accepted" });
     
-    // 自分 -> 相手 を友達登録
+    // 自分 -> 相手
     await setDoc(doc(db, "users", user.uid, "friends", req.fromUid), {
-      username: req.fromName,
-      createdAt: serverTimestamp()
+      createdAt: serverTimestamp() // 名前は保存せず、表示時に辞書から引くので最低限でOK
     }, { merge: true });
 
-    // 相手 -> 自分 を友達登録
-    // (※本来は相手側の処理ですが、簡易的にここで両方やっちゃいます)
-    // 注意: 本番環境ではセキュリティルールで弾かれる可能性がありますが、開発中はこれでOK
+    // 相手 -> 自分
     await setDoc(doc(db, "users", req.fromUid, "friends", user.uid), {
-      username: user.email,
       createdAt: serverTimestamp()
     }, { merge: true });
     
     alert("友達になりました！");
   };
 
-  // ★チャットを開始する機能
+  // ★チャットを開始する（エラー修正版）
   const handleStartChat = async (friendId: string) => {
     if (!user || loadingChat) return;
     setLoadingChat(true);
@@ -100,13 +127,14 @@ export default function FriendsPage() {
         collection(db, "chats"), 
         where("participants", "array-contains", user.uid)
       );
-      const snapshot = await getDocs(q);// 自分が参加しているチャットを取得
+      const snapshot = await getDocs(q);
       
       let existingChatId = null;
-      // 参加者に相手が含まれているチャットを探す
+
       snapshot.forEach(doc => {
         const data = doc.data();
-        if (data.participants.includes(friendId)) {
+        // ★修正: data.participants が無い場合にエラーになるのを防ぐ (?をつける)
+        if (data.participants?.includes(friendId)) {
           existingChatId = doc.id;
         }
       });
@@ -126,12 +154,11 @@ export default function FriendsPage() {
 
     } catch (e) {
       console.error(e);
-      alert("エラーが発生しました");
+      alert("エラーが発生しました。コンソールを確認してください。");
     } finally {
       setLoadingChat(false);
     }
   };
-
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24 p-4">
@@ -156,12 +183,12 @@ export default function FriendsPage() {
               <CardContent className="p-3 flex justify-between items-center">
                 <div className="flex items-center gap-2">
                   <Avatar className="h-8 w-8">
-                     <AvatarFallback>{u.username?.[0]}</AvatarFallback>
                      <AvatarImage src={u.avatarUrl} />
+                     <AvatarFallback>{u.username?.[0]}</AvatarFallback>
                   </Avatar>
                   <span>{u.username || "名無し"}</span>
                 </div>
-                <Button size="sm" onClick={() => sendRequest(u.id, u.username)}>
+                <Button size="sm" onClick={() => sendRequest(u.id)}>
                   <UserPlus className="h-4 w-4 mr-1" /> 申請
                 </Button>
               </CardContent>
@@ -191,29 +218,36 @@ export default function FriendsPage() {
       <div>
         <h2 className="text-lg font-bold mb-4">友達リスト ({friends.length})</h2>
         <div className="space-y-2">
-          {friends.map((friend) => (
-            <Card key={friend.id}>
-              <CardContent className="p-3 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <Avatar>
-                    <AvatarFallback>{friend.username?.[0]}</AvatarFallback>
-                    <AvatarImage src={friend.avatarUrl} />
-                  </Avatar>
-                  <span className="font-medium">{friend.username}</span>
-                </div>
-                
-                {/* チャット開始ボタン */}
-                <Button 
-                  size="sm" 
-                  variant="default"
-                  onClick={() => handleStartChat(friend.id)}
-                  disabled={loadingChat}
-                >
-                  {loadingChat ? <Loader2 className="animate-spin h-4 w-4" /> : <MessageCircle className="h-4 w-4" />}
-                </Button>
-              </CardContent>
-            </Card>
-          ))}
+          {friends.map((friend) => {
+            // ★重要: 保存されたデータではなく、最新の辞書から情報を取る
+            // これにより、今メールアドレスで保存されていても、正しい名前に変換して表示します！
+            const profile = userProfiles[friend.id] || {};
+            const displayName = profile.username || "読み込み中...";
+            const avatarUrl = profile.avatarUrl;
+
+            return (
+              <Card key={friend.id}>
+                <CardContent className="p-3 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <Avatar>
+                      <AvatarImage src={avatarUrl} />
+                      <AvatarFallback>{displayName[0]}</AvatarFallback>
+                    </Avatar>
+                    <span className="font-medium">{displayName}</span>
+                  </div>
+                  
+                  <Button 
+                    size="sm" 
+                    variant="default"
+                    onClick={() => handleStartChat(friend.id)}
+                    disabled={loadingChat}
+                  >
+                    {loadingChat ? <Loader2 className="animate-spin h-4 w-4" /> : <MessageCircle className="h-4 w-4" />}
+                  </Button>
+                </CardContent>
+              </Card>
+            );
+          })}
           {friends.length === 0 && (
             <p className="text-gray-400 text-sm">友達がいません。<br/>まずはユーザー検索から申請を送ってみましょう！</p>
           )}

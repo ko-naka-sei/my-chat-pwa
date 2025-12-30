@@ -1,3 +1,4 @@
+// context/AuthContext.tsx
 "use client"; // ★Next.jsでReactの機能(useStateなど)を使う時に必須
 
 import { auth } from "@/lib/firebase";

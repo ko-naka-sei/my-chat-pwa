@@ -14,7 +14,6 @@ export default function ViewTimetablePage() {
   const searchParams = useSearchParams();
   const name = searchParams.get("name") || "ユーザー"; // URLから名前も受け取る
   const router = useRouter();
-  
   const [schedule, setSchedule] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 

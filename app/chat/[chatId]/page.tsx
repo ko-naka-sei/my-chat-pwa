@@ -10,6 +10,15 @@ import { Button } from "@/components/ui/button";
 import { Send, ArrowLeft } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
+// メッセージの型を定義
+interface Message {
+  id: string;
+  senderId: string;
+  text: string;
+  createdAt: any;
+  seen: boolean;
+}
+
 export default function ChatRoomPage() {
   const { user } = useAuth();
   const { chatId } = useParams();
@@ -49,25 +58,31 @@ export default function ChatRoomPage() {
     fetchChatInfo();
   }, [chatId, user]);
 
-  // 2. メッセージ取得 & 既読処理
-  useEffect(() => {
-    if (!chatId || !user) return;
-    const q = query(collection(db, "chats", chatId as string, "messages"), orderBy("createdAt", "asc"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const msgs = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      setMessages(msgs);
-      
-      // ★既読処理: 相手からの未読メッセージを既読にする
-      msgs.forEach(async (msg) => {
-        if (msg.senderId !== user.uid && !msg.seen) {
-          await updateDoc(doc(db, "chats", chatId as string, "messages", msg.id), { seen: true });
-        }
-      });
-      
-      setTimeout(() => scrollRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+// 2. メッセージ取得 & 既読処理
+useEffect(() => {
+  if (!chatId || !user) return;
+  const q = query(collection(db, "chats", chatId as string, "messages"), orderBy("createdAt", "asc"));
+  
+  const unsubscribe = onSnapshot(q, (snapshot) => {
+    // ★ここを修正：型を Message[] として明示する
+    const msgs = snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    })) as Message[]; 
+
+    setMessages(msgs);
+    
+    // これで msg.senderId のエラーが消えます
+    msgs.forEach(async (msg) => {
+      if (msg.senderId !== user.uid && !msg.seen) {
+        await updateDoc(doc(db, "chats", chatId as string, "messages", msg.id), { seen: true });
+      }
     });
-    return () => unsubscribe();
-  }, [chatId, user]);
+    
+    setTimeout(() => scrollRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+  });
+  return () => unsubscribe();
+}, [chatId, user]);
 
   // ★入力中状態を送信する関数
   const setTypingStatus = async (status: boolean) => {

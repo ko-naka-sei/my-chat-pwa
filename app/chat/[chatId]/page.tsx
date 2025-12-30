@@ -103,23 +103,60 @@ useEffect(() => {
   };
 
   const sendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim() || !user) return;
-    const textToSend = input;
-    setInput("");
-    setTypingStatus(false); // 送信したら入力中をオフ
+  e.preventDefault();
+  if (!input.trim() || !user) return;
 
+  const textToSend = input;
+  setInput("");
+  setTypingStatus(false);
+
+  try {
+    // 1. メッセージを保存
     await addDoc(collection(db, "chats", chatId as string, "messages"), {
       text: textToSend,
       senderId: user.uid,
       createdAt: serverTimestamp(),
-      seen: false, // ★初期値は未読
+      seen: false,
     });
+
+    // 2. 部屋情報の更新
     await updateDoc(doc(db, "chats", chatId as string), {
       lastMessage: textToSend,
       updatedAt: serverTimestamp(),
     });
-  };
+
+    // --- ★ここから通知送信ロジック ---
+    
+    // 3. 相手のUIDを特定
+    const chatDoc = await getDoc(doc(db, "chats", chatId as string));
+    const otherUserId = chatDoc.data()?.participants?.find((id: string) => id !== user.uid);
+
+    if (otherUserId) {
+      // 4. 相手のトークンをFirestoreから取得
+      const userDoc = await getDoc(doc(db, "users", otherUserId));
+      const targetToken = userDoc.data()?.fcmToken;
+
+      if (targetToken) {
+        // 5. 通知を送信する関数を呼ぶ
+        sendPushNotification(targetToken, user.displayName || "新しいメッセージ", textToSend);
+      }
+    }
+  } 
+  
+  catch (error) {
+    console.error("送信エラー", error);
+  }
+  const sendPushNotification = async (token: string, title: string, body: string) => {
+  // ※本来はここでGoogleの認証が必要ですが、簡易的にFetchの構造を示します
+  // 実際にはFirebase Cloud Functionsを通すのが現在の標準です。
+  
+  console.log("通知を送信しようとしています:", token);
+
+  // フロントエンドから直接送る場合、本来はバックエンド用の「秘密鍵」が必要になるため
+  // ここでエラーが出ることが多いです。
+  // そのため、多くの開発者はここで「Cloud Functions」へ切り替えます。
+};
+};
 
   return (
     <div className="flex flex-col h-screen bg-gray-100">

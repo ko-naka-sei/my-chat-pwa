@@ -1,14 +1,14 @@
+// app/api/notify/route.ts
 import { NextResponse } from "next/server";
 
 export async function POST(request: Request) {
   try {
     const { token, title, body } = await request.json();
+    
+    // ★ここをもう一度確認！「サーバーキー」を正しく貼ってください
+    const SERVER_KEY = "BHo14FNBcE55-NJe5YIHoqBa4dAVHbAn5XzrL_VSK7itWchZy4C88Yc33CzGo6IXg3ltiAOt02-PvlaZqd_c0Zs"; 
 
-    // ★重要: Firebaseコンソール > プロジェクト設定 > クラウドメッセージング
-    // 「Cloud Messaging API (従来の方式)」を有効にして表示される「サーバーキー」をここに貼る
-    const SERVER_KEY = "BHo14FNBcE55-NJe5YIHoqBa4dAVHbAn5XzrL_VSK7itWchZy4C88Yc33CzGo6IXg3ltiAOt02-PvlaZqd_c0Zs";
-
-    const response = await fetch("https://fcm.googleapis.com/fcm/send", {
+    const fcmResponse = await fetch("https://fcm.googleapis.com/fcm/send", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -20,17 +20,26 @@ export async function POST(request: Request) {
           title: title,
           body: body,
           sound: "default",
-          icon: "/icon-192x192.png", // 先ほど作成したアイコン
-          click_action: "https://my-chat-pwa-ashy.vercel.app/", // 自分のアプリURL
         },
-        priority: "high",
       }),
     });
 
-    const data = await response.json();
-    return NextResponse.json(data);
-  } catch (error) {
-    console.error("Internal API Error:", error);
-    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+    // ここでJSONとして解析する前に、中身が何かをチェックする
+    const contentType = fcmResponse.headers.get("content-type");
+    
+    if (contentType && contentType.includes("application/json")) {
+      const result = await fcmResponse.json();
+      console.log("FCM送信成功:", result);
+      return NextResponse.json(result);
+    } else {
+      // HTML（エラーページ）が返ってきた場合
+      const errorText = await fcmResponse.text();
+      console.error("FCMからHTMLエラーが返りました:", errorText);
+      return NextResponse.json({ error: "Google API Error", details: errorText }, { status: fcmResponse.status });
+    }
+
+  } catch (error: any) {
+    console.error("API内部エラー:", error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

@@ -1,5 +1,5 @@
-// app/chat/[chatId]/page.tsx
 "use client";
+
 import { useState, useEffect, useRef } from "react";
 import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, doc, updateDoc, getDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Send, ArrowLeft } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
-// メッセージの型を定義
+// --- 1. 型定義 (TypeScriptのビルドエラーを防ぐ) ---
 interface Message {
   id: string;
   senderId: string;
@@ -19,72 +19,109 @@ interface Message {
   seen: boolean;
 }
 
+interface UserProfile {
+  username?: string;
+  avatarUrl?: string | null;
+  fcmToken?: string;
+}
+
+// --- 2. 通知送信関数 (コンポーネントの外に定義して hoisting エラーを回避) ---
+// ※ この方式は Google の旧 API を使用した簡易版です
+async function sendPushNotification(token: string, title: string, body: string) {
+  console.log("通知送信を試行中...", token);
+  try {
+    // 【注意】本来はサーバー側で行う処理です。セキュリティキーの扱いに注意してください。
+    await fetch("https://fcm.googleapis.com/fcm/send", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        // Firebaseコンソール > プロジェクト設定 > クラウドメッセージング の「サーバーキー」を貼り付け
+        "Authorization": "key=YOUR_LEGACY_SERVER_KEY_HERE", 
+      },
+      body: JSON.stringify({
+        to: token,
+        notification: {
+          title: title,
+          body: body,
+          sound: "default",
+        },
+        priority: "high",
+      }),
+    });
+  } catch (error) {
+    console.error("FCM送信エラー:", error);
+  }
+}
+
 export default function ChatRoomPage() {
   const { user } = useAuth();
   const { chatId } = useParams();
   const router = useRouter();
 
-  const [messages, setMessages] = useState<any[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [friendName, setFriendName] = useState("...");
   const [friendAvatar, setFriendAvatar] = useState<string | null>(null);
-  const [isFriendTyping, setIsFriendTyping] = useState(false); // ★入力中状態
+  const [isFriendTyping, setIsFriendTyping] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // 1. 相手の情報 & 入力中状態の監視
+  // --- 3. 相手の情報 & 入力中状態の監視 ---
   useEffect(() => {
     if (!user || !chatId) return;
+
     const fetchChatInfo = async () => {
       const chatDocRef = doc(db, "chats", chatId as string);
       const chatDoc = await getDoc(chatDocRef);
+      
       if (chatDoc.exists()) {
         const otherUserId = chatDoc.data().participants?.find((id: string) => id !== user.uid);
         if (otherUserId) {
+          // 相手のプロフィール監視
           onSnapshot(doc(db, "users", otherUserId), (d) => {
-            setFriendName(d.data()?.username || "名無し");
-            setFriendAvatar(d.data()?.avatarUrl || null);
+            const data = d.data() as UserProfile;
+            setFriendName(data?.username || "名無し");
+            setFriendAvatar(data?.avatarUrl || null);
           });
-          // ★チャットルーム内の相手の入力状態を監視
-          const unsubChat = onSnapshot(doc(db, "chats", chatId as string), (d) => {
+          // チャットルーム内の入力状態監視
+          onSnapshot(doc(db, "chats", chatId as string), (d) => {
             const typingData = d.data()?.typing || {};
             setIsFriendTyping(typingData[otherUserId] || false);
           });
-          return () => unsubChat();
         }
       }
     };
     fetchChatInfo();
   }, [chatId, user]);
 
-// 2. メッセージ取得 & 既読処理
-useEffect(() => {
-  if (!chatId || !user) return;
-  const q = query(collection(db, "chats", chatId as string, "messages"), orderBy("createdAt", "asc"));
-  
-  const unsubscribe = onSnapshot(q, (snapshot) => {
-    // ★ここを修正：型を Message[] として明示する
-    const msgs = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    })) as Message[]; 
+  // --- 4. メッセージ取得 & 既読処理 ---
+  useEffect(() => {
+    if (!chatId || !user) return;
 
-    setMessages(msgs);
-    
-    // これで msg.senderId のエラーが消えます
-    msgs.forEach(async (msg) => {
-      if (msg.senderId !== user.uid && !msg.seen) {
-        await updateDoc(doc(db, "chats", chatId as string, "messages", msg.id), { seen: true });
-      }
+    const q = query(collection(db, "chats", chatId as string, "messages"), orderBy("createdAt", "asc"));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const msgs = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      })) as Message[];
+
+      setMessages(msgs);
+      
+      // 既読更新
+      msgs.forEach(async (msg) => {
+        if (msg.senderId !== user.uid && !msg.seen) {
+          await updateDoc(doc(db, "chats", chatId as string, "messages", msg.id), { seen: true });
+        }
+      });
+      
+      setTimeout(() => scrollRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
     });
-    
-    setTimeout(() => scrollRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
-  });
-  return () => unsubscribe();
-}, [chatId, user]);
 
-  // ★入力中状態を送信する関数
+    return () => unsubscribe();
+  }, [chatId, user]);
+
+  // --- 5. 送信・入力イベントハンドラ ---
   const setTypingStatus = async (status: boolean) => {
     if (!user || !chatId) return;
     await updateDoc(doc(db, "chats", chatId as string), {
@@ -94,80 +131,61 @@ useEffect(() => {
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setInput(e.target.value);
-    setTypingStatus(true); // 入力開始
-
+    setTypingStatus(true);
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-    typingTimeoutRef.current = setTimeout(() => {
-      setTypingStatus(false); // 2秒間止まったら停止
-    }, 2000);
+    typingTimeoutRef.current = setTimeout(() => setTypingStatus(false), 2000);
   };
 
   const sendMessage = async (e: React.FormEvent) => {
-  e.preventDefault();
-  if (!input.trim() || !user) return;
+    e.preventDefault();
+    if (!input.trim() || !user) return;
 
-  const textToSend = input;
-  setInput("");
-  setTypingStatus(false);
+    const textToSend = input;
+    setInput("");
+    setTypingStatus(false);
 
-  try {
-    // 1. メッセージを保存
-    await addDoc(collection(db, "chats", chatId as string, "messages"), {
-      text: textToSend,
-      senderId: user.uid,
-      createdAt: serverTimestamp(),
-      seen: false,
-    });
+    try {
+      // メッセージ追加
+      await addDoc(collection(db, "chats", chatId as string, "messages"), {
+        text: textToSend,
+        senderId: user.uid,
+        createdAt: serverTimestamp(),
+        seen: false,
+      });
 
-    // 2. 部屋情報の更新
-    await updateDoc(doc(db, "chats", chatId as string), {
-      lastMessage: textToSend,
-      updatedAt: serverTimestamp(),
-    });
+      // 最終メッセージ更新
+      await updateDoc(doc(db, "chats", chatId as string), {
+        lastMessage: textToSend,
+        updatedAt: serverTimestamp(),
+      });
 
-    // --- ★ここから通知送信ロジック ---
-    
-    // 3. 相手のUIDを特定
-    const chatDoc = await getDoc(doc(db, "chats", chatId as string));
-    const otherUserId = chatDoc.data()?.participants?.find((id: string) => id !== user.uid);
-
-    if (otherUserId) {
-      // 4. 相手のトークンをFirestoreから取得
-      const userDoc = await getDoc(doc(db, "users", otherUserId));
-      const targetToken = userDoc.data()?.fcmToken;
-
-      if (targetToken) {
-        // 5. 通知を送信する関数を呼ぶ
-        sendPushNotification(targetToken, user.displayName || "新しいメッセージ", textToSend);
+      // --- 通知送信ロジック ---
+      const chatDoc = await getDoc(doc(db, "chats", chatId as string));
+      const otherUserId = chatDoc.data()?.participants?.find((id: string) => id !== user.uid);
+      
+      if (otherUserId) {
+        const userDoc = await getDoc(doc(db, "users", otherUserId));
+        const targetToken = userDoc.data()?.fcmToken;
+        if (targetToken) {
+          // 相手に通知を飛ばす
+          await sendPushNotification(targetToken, user.email?.split('@')[0] || "新着メッセージ", textToSend);
+        }
       }
+    } catch (error) {
+      console.error("送信エラー", error);
     }
-  } 
-  
-  catch (error) {
-    console.error("送信エラー", error);
-  }
-  const sendPushNotification = async (token: string, title: string, body: string) => {
-  // ※本来はここでGoogleの認証が必要ですが、簡易的にFetchの構造を示します
-  // 実際にはFirebase Cloud Functionsを通すのが現在の標準です。
-  
-  console.log("通知を送信しようとしています:", token);
-
-  // フロントエンドから直接送る場合、本来はバックエンド用の「秘密鍵」が必要になるため
-  // ここでエラーが出ることが多いです。
-  // そのため、多くの開発者はここで「Cloud Functions」へ切り替えます。
-};
-};
+  };
 
   return (
     <div className="flex flex-col h-screen bg-gray-100">
       <div className="bg-white px-4 py-3 border-b flex items-center gap-3 sticky top-0 z-10">
-        <Button variant="ghost" size="icon" onClick={() => router.back()}><ArrowLeft /></Button>
+        <Button variant="ghost" size="icon" onClick={() => router.back()}><ArrowLeft className="h-5 w-5" /></Button>
         <Avatar className="h-8 w-8">
           <AvatarImage src={friendAvatar || undefined} />
           <AvatarFallback>{friendName[0]}</AvatarFallback>
         </Avatar>
         <div>
-          <p className="font-bold text-sm">{friendName}</p>
+          <p className="font-bold text-sm truncate max-w-[150px]">{friendName}</p>
           {isFriendTyping && <p className="text-[10px] text-blue-500 animate-pulse">入力中...</p>}
         </div>
       </div>
@@ -184,10 +202,9 @@ useEffect(() => {
                 </Avatar>
               )}
               <div className="flex flex-col items-end">
-                <div className={`max-w-[250px] rounded-2xl px-4 py-2 text-sm ${isMe ? "bg-blue-500 text-white rounded-br-none" : "bg-white border rounded-bl-none"}`}>
+                <div className={`max-w-[250px] rounded-2xl px-4 py-2 text-sm ${isMe ? "bg-blue-500 text-white rounded-br-none" : "bg-white border rounded-bl-none shadow-sm text-gray-800"}`}>
                   {msg.text}
                 </div>
-                {/* ★既読表示 */}
                 {isMe && msg.seen && <span className="text-[10px] text-gray-400 mt-1">既読</span>}
               </div>
             </div>
@@ -196,7 +213,7 @@ useEffect(() => {
         <div ref={scrollRef} />
       </div>
 
-      <div className="bg-white p-3 border-t">
+      <div className="bg-white p-3 border-t pb-safe">
         <form onSubmit={sendMessage} className="flex gap-2 max-w-md mx-auto">
           <Input value={input} onChange={handleInputChange} placeholder="メッセージ..." className="flex-1" />
           <Button type="submit" size="icon" disabled={!input.trim()}><Send className="h-4 w-4" /></Button>

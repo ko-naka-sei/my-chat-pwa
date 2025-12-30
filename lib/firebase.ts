@@ -3,6 +3,7 @@ import { getApp, getApps, initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 // import { getStorage } from "firebase/storage"; // 画像保存用（必要なら）
+import { getMessaging, Messaging } from "firebase/messaging";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAIixoZPImlu3MtL7zHm_9rkssceHYzqUw",
@@ -14,9 +15,14 @@ const firebaseConfig = {
   measurementId: "G-LQGMYZY21D"
 };
 
-// Next.jsではサーバー側でもコードが動くため、二重初期化を防ぐおまじない
-const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
+const db = getFirestore(app);
+const auth = getAuth(app);
 
-export const auth = getAuth(app);
-export const db = getFirestore(app);
-// export const storage = getStorage(app);
+// ブラウザ環境（windowが存在する）の時だけ初期化
+let messaging: Messaging | undefined;
+if (typeof window !== "undefined") {
+  messaging = getMessaging(app);
+}
+
+export { db, auth, messaging };

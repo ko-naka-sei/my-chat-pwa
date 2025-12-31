@@ -1,15 +1,15 @@
-//  app/login/page.tsx
 "use client";
 
 import { useState } from "react";
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from "firebase/auth";
-import { doc, setDoc } from "firebase/firestore";
-import { auth, db } from "@/lib/firebase";
+import { doc, setDoc, serverTimestamp, updateDoc } from "firebase/firestore"; // serverTimestampを推奨
+import { auth, db, messaging } from "@/lib/firebase"; // messagingをインポート
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
+import { getToken } from "firebase/messaging"; // トークン取得用
 
 export default function LoginPage() {
   const [isLoginMode, setIsLoginMode] = useState(true);
@@ -19,14 +19,30 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const router = useRouter();
 
+  // === デバイスの通知トークンを取得して保存する関数 ===
+  const saveFcmToken = async (uid: string) => {
+    try {
+      if (!messaging) return;
+      const token = await getToken(messaging, {
+        vapidKey: "BHo14FNBcE55-NJe5YIHoqBa4dAVHbAn5XzrL_VSK7itWchZy4C88Yc33CzGo6IXg3ltiAOt02-PvlaZqd_c0Zs"
+      });
+      if (token) {
+        await updateDoc(doc(db, "users", uid), { fcmToken: token });
+      }
+    } catch (err) {
+      console.error("トークン取得失敗:", err);
+    }
+  };
+
   const handleAuth = async (e: React.FormEvent) => {
-    e.preventDefault(); // フォーム送信によるリロードを防ぐ
+    e.preventDefault();
     setLoading(true);
 
     try {
       if (isLoginMode) {
         // === ログイン ===
-        await signInWithEmailAndPassword(auth, email, password);
+        const userCredential = await signInWithEmailAndPassword(auth, email, password);
+        await saveFcmToken(userCredential.user.uid); // ログイン時もトークンを更新
       } else {
         // === 新規登録 ===
         if (!username) throw new Error("ユーザー名を入力してください");
@@ -34,19 +50,29 @@ export default function LoginPage() {
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
         const user = userCredential.user;
 
-        // Firestoreにユーザー情報保存
+        // Firestoreにユーザー情報を初期保存
+        // new Date() よりも serverTimestamp() を使うのがエンジニアの標準です
         await setDoc(doc(db, "users", user.uid), {
           uid: user.uid,
           username: username,
           email: email,
-          createdAt: new Date(),
-          following: [],
+          createdAt: serverTimestamp(), 
+          fcmToken: "", // 最初は空で作成
           friends: [],
         });
+
+        // 登録直後に通知トークンを取得して保存
+        await saveFcmToken(user.uid);
       }
-      // 成功したら AuthContext が自動検知してトップページへ飛ばしてくれます
+      // 成功したらトップページへ
+      router.push("/");
     } catch (e: any) {
-      alert("エラー: " + e.message); // とりあえずシンプルにalert
+      console.error(e);
+      // エラーメッセージを日本語で分かりやすく
+      let message = e.message;
+      if (e.code === "auth/email-already-in-use") message = "このメールアドレスは既に使われています";
+      if (e.code === "auth/weak-password") message = "パスワードが短すぎます（6文字以上必要です）";
+      alert("エラー: " + message);
     } finally {
       setLoading(false);
     }
@@ -54,13 +80,13 @@ export default function LoginPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-gray-100 p-4">
-      <Card className="w-full max-w-md">
+      <Card className="w-full max-w-md shadow-lg">
         <CardHeader>
-          <CardTitle className="text-2xl text-center">
-            {isLoginMode ? "おかえりなさい！" : "はじめまして！"}
+          <CardTitle className="text-2xl text-center font-bold">
+            {isLoginMode ? "おかえりなさい！" : "チャットを始めよう！"}
           </CardTitle>
           <CardDescription className="text-center">
-            {isLoginMode ? "ログインして友達の投稿を見よう" : "アカウントを作成して始めよう"}
+            {isLoginMode ? "ログインして友達と話そう" : "アカウントを作成して通知を受け取ろう"}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -73,6 +99,7 @@ export default function LoginPage() {
                   placeholder="例: たろう"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
+                  required
                 />
               </div>
             )}
@@ -101,15 +128,15 @@ export default function LoginPage() {
             </div>
 
             <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? "処理中..." : (isLoginMode ? "ログイン" : "新規登録")}
+              {loading ? "通信中..." : (isLoginMode ? "ログイン" : "新規登録して開始")}
             </Button>
           </form>
 
-          <div className="mt-4 text-center">
+          <div className="mt-6 text-center">
             <button
               type="button"
               onClick={() => setIsLoginMode(!isLoginMode)}
-              className="text-sm text-blue-600 hover:underline"
+              className="text-sm text-blue-600 hover:underline font-medium"
             >
               {isLoginMode
                 ? "アカウントを持っていない方はこちら（新規登録）"

@@ -38,8 +38,13 @@ export default function ChatRoomPage() {
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      setIsUnlocked(!snapshot.empty); // 1つでもあればアンロック！
-    });
+  // 🔍 ここにログを追加
+  console.log("--- アンロック判定チェック ---");
+  console.log("見つかった今日の投稿数:", snapshot.size);
+  console.log("判定結果 (isUnlocked):", !snapshot.empty);
+  
+  setIsUnlocked(!snapshot.empty);
+});
 
     return () => unsubscribe();
   }, [chatId, user]);

@@ -13,11 +13,11 @@ export async function POST(request: Request) {
     const { token, title, body, chatId } = await request.json();
 
     const message = {
-      // notification を使わず data のみにすることで、勝手な自動表示を止めます
+      // dataのみにすることで、ブラウザの勝手な2重表示を防ぎます
       data: {
-        title: title,
-        body: body,
-        url: `/chat/${chatId}`, 
+        title,
+        body,
+        url: `/chat/${chatId}`,
       },
       token: token,
     };
@@ -25,7 +25,6 @@ export async function POST(request: Request) {
     const response = await admin.messaging().send(message);
     return NextResponse.json({ success: true, response });
   } catch (error: any) {
-    console.error("FCM送信エラー:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
